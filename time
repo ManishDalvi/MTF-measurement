@@ -1,0 +1,121 @@
+	Core::TimeSpan time3 = Core::getCurrentTime();
+	obtain_distance_of_pixels_from_center(dist, intensity, main_circle);
+	Core::TimeSpan time4 = Core::getCurrentTime();
+	sort_pixel_by_ascending_distance(dist, intensity);
+	image_binning_averaging1(dist, intensity, 0.032, averaged_distance, averaged_intensity);
+	dist.clear();
+	intensity.clear();
+	grouping_for_polynomial_fit(averaged_distance, averaged_intensity, fit_size[0], degree_of_polynomial, erf_cubic_fit_distance, erf_cubic_fit_intensity);
+	averaged_distance.clear();
+	averaged_intensity.clear();
+
+	grouping_for_derivative_of_cubic_fit(erf_cubic_fit_distance, erf_cubic_fit_intensity, fit_size[0], degree_of_polynomial, psf_cubic_fit_distance, psf_cubic_fit_intensity);
+	////	differentiation(erf_cubic_fit_distance, erf_cubic_fit_intensity, psf_cubic_fit_distance, psf_cubic_fit_intensity);
+	erf_cubic_fit_distance.clear();
+	erf_cubic_fit_intensity.clear();
+	normalise_psf(psf_cubic_fit_distance, psf_cubic_fit_intensity);
+	//	write_psf_to_excel(psf_cubic_fit_distance, psf_cubic_fit_intensity);
+	//	cout << "PSF obtained" << endl;
+
+	x_out = new complex<double>[psf_cubic_fit_intensity.size()]();
+	Core::TimeSpan time5 = Core::getCurrentTime();
+	perform_fft(psf_cubic_fit_intensity, x_out);
+	Core::TimeSpan time6 = Core::getCurrentTime();
+	psf_cubic_fit_distance.clear();
+	psf_cubic_fit_intensity.clear();
+	//print_complex_array(x_out, psf_size);
+	cout << "MTF obtained" << endl;
+	std::cout << "HOST TIME :: " << (time4-time3) + (time6-time5) << std::endl;
+
+
+
+int obtain_distance_of_pixels_from_center(vector<float> &dist, vector<float> &intensity, struct detected_circle main_circle){
+	Mat src, src_gray;
+	float temp_variable_distance;
+	int temp_variable_intensity;
+
+	/// Read the image
+	src = imread( "Input4.pgm", 1 );
+
+	if( !src.data || main_circle.radius == -1 ){
+		cout << "obtain_distance_from_center () : either image or circle is not found" << endl;
+		return -1;
+	  }
+
+	/// Convert it to gray
+	cvtColor( src, src_gray, CV_BGR2GRAY );
+
+	/// Reduce the noise so we avoid false circle detection
+	GaussianBlur( src_gray, src_gray, Size(9, 9), 2, 4 );
+
+	for(int i = 0; i < src_gray.cols ; i++){
+	  for( int j = 0; j < src_gray.rows ; j++){
+	    if( (pow((j-main_circle.center_y),2) + pow((i-main_circle.center_x),2))  <= pow((main_circle.radius+ROI_RADIUS),2)){
+		  if((pow((j-main_circle.center_y),2) + pow((i-main_circle.center_x),2))  >= pow((main_circle.radius-ROI_RADIUS),2)){
+			  temp_variable_intensity = src_gray.at<uchar>(j, i);
+			  temp_variable_distance = (sqrt((pow((j-main_circle.center_y),2) + pow((i-main_circle.center_x),2))));
+			  dist.push_back(temp_variable_distance);
+			  intensity.push_back(temp_variable_intensity);
+		  }
+
+	    }
+
+	  }
+
+	}
+//	cout << "EXITING obtain_distance_of_pixels_from_center" << endl;
+	return 0;
+}
+
+void fft_rec(complex<double> *x, int N) {
+	// Check if it is splitted enough
+	if (N <= 1) {
+		return;
+	}
+
+	// Split even and odd
+	complex<double> odd[N/2];
+	complex<double> even[N/2];
+	for (int i = 0; i < N / 2; i++) {
+		even[i] = x[i*2];
+		odd[i] = x[i*2+1];
+	}
+
+	// Split on tasks
+	fft_rec(even, N/2);
+	fft_rec(odd, N/2);
+
+
+	// Calculate DFT
+	for (int k = 0; k < N / 2; k++) {
+		complex<double> t = exp(complex<double>(0, -2 * M_PI * k / N)) * odd[k];
+		x[k] = even[k] + t;
+		x[N / 2 + k] = even[k] - t;
+	}
+}
+
+void fft(float *x_in, complex<double> *x_out, int N) {
+
+	//cout << "HERE fft start" << endl;
+	// Make copy of array and apply window
+	for (int i = 0; i < N; i++) {
+		x_out[i] = complex<double>(x_in[i], 0);
+		x_out[i] *= 1; // Window
+	}
+
+	// Start recursion
+	fft_rec(x_out, N);
+	cout << "FFT Performed" << endl;
+}
+
+void perform_fft(vector<float> &psf_cubic_fit_intensity, complex<double> *x_out){
+	  // FFT of PSF
+	  unsigned int size =  psf_cubic_fit_intensity.size();
+	  float* psf_intensity = new float[size]();
+
+	  for(unsigned int i =0; i < size; i++){
+		  psf_intensity[i] = psf_cubic_fit_intensity[i];
+		  //cout << "PSF Intensity : " << psf_intensity[i] << endl;
+	  }
+	  fft(psf_intensity,x_out,size);
+}
